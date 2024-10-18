@@ -10,3 +10,5 @@ Just run the Python script in the current directory: requires astropy and astrop
     pip install astroplan
 
 Latitude/longitude and the definition of the observing window are all hard-coded.
+
+you can modify the CSV file if you want to customise the DSO database, so long as the column titles are maintained.
