@@ -6,9 +6,9 @@ The sample object database is from "All Splendours, No Fuzzies." https://www.ocr
 
 Just run the Python script in the current directory: requires astropy and astroplan packages
 
-'''
+`code`
 pip install astropy
 pip install astroplan
-'''
+`code`
 
 Latitude/longitude and the definition of the observing window are all hard-coded.
