@@ -51,7 +51,7 @@ def read_csv(filename):
                 objects.append({
                     'ID': row['ID'],
                     'coord': coord,
-                    'name': f"{row['ID']} ({row['Type']} in {row['Constellation']})"
+                    'name': f"{row['ID']} ({row['Type']} in {row['Constellation']}) - {row['Size']}\n{row['Remarks']}"
                 })
     return objects
 
