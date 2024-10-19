@@ -51,7 +51,7 @@ def read_csv(filename):
                 objects.append({
                     'ID': row['ID'],
                     'coord': coord,
-                    'name': f"{row['ID']} ({row['Constellation']})"
+                    'name': f"{row['ID']} ({row['Type']} in {row['Constellation']})"
                 })
     return objects
 
@@ -138,9 +138,9 @@ def main():
     csv_file = 'astronomical_objects.csv'  # Replace with your CSV file path
     lat = 51.5074  # London latitude
     lon = -0.1278  # London longitude
-    alt = 45  # 45 degrees altitude
-    az = 220  # 220 degrees azimuth
-    width = 120  # 120 degrees width
+    alt = 60  # 45 degrees altitude
+    az = 250  # 220 degrees azimuth
+    width = 160  # 120 degrees width
     height = 60  # 60 degrees height
 
     # Set timezone for London
@@ -202,12 +202,12 @@ def main():
                 dark_indicator = '*' if is_dark(Time(obj['entry_time']), observer) else ''
                 time_diff = obj['entry_time'] - current_time
                 entry_alt, entry_az = get_altaz_at_time(obj['coord'], observer, obj['entry_time'])
-                print(f"  Enters window: {obj['entry_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}{dark_indicator} (Time difference: {time_diff})")
+                print(f"  Enters window: {obj['entry_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}{dark_indicator}")
                 print(f"    Alt/Az at entry: {entry_alt:.2f}°/{entry_az:.2f}°")
             if obj['exit_time']:
                 dark_indicator = '*' if is_dark(Time(obj['exit_time']), observer) else ''
                 time_diff = obj['exit_time'] - current_time
-                print(f"  Exits window: {obj['exit_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}{dark_indicator} (Time difference: {time_diff})")
+                print(f"  Exits window: {obj['exit_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}{dark_indicator}")
             print()
 
 if __name__ == "__main__":
