@@ -119,21 +119,25 @@ def main():
     observer = Observer(location=location, timezone=timezone)
 
     current_time = datetime.now(timezone)
-    start_time, end_time = Time(current_time), Time(current_time + timedelta(days=1))
+    start_time = Time(current_time)
+    twilight_start, twilight_end = get_twilight_times(observer, start_time, start_time + timedelta(days=1))
 
-    twilight_start, twilight_end = get_twilight_times(observer, start_time, end_time)
+    if twilight_end:
+        end_time = Time(twilight_end)
+    else:
+        end_time = start_time + timedelta(days=1)
 
     objects = read_csv(csv_file)
     visible_objects = calculate_visibility(objects, observer, alt, az, width, height, start_time, end_time, timezone)
 
     dark_visible_objects = [
         obj for obj in visible_objects
-        if any(twilight_start <= time <= twilight_end for time in obj['entry_times'] + obj['exit_times'])
+        if any(twilight_start <= time <= end_time for time in obj['entry_times'] + obj['exit_times'])
     ]
 
     sorted_objects = sorted(dark_visible_objects, key=lambda obj: min(
-        min((abs((time - current_time).total_seconds()) for time in obj['entry_times'] if twilight_start <= time <= twilight_end), default=float('inf')),
-        min((abs((time - current_time).total_seconds()) for time in obj['exit_times'] if twilight_start <= time <= twilight_end), default=float('inf'))
+        min((abs((time - current_time).total_seconds()) for time in obj['entry_times'] if twilight_start <= time <= end_time), default=float('inf')),
+        min((abs((time - current_time).total_seconds()) for time in obj['exit_times'] if twilight_start <= time <= end_time), default=float('inf'))
     ))
 
     print(f"Report for night of {start_time.datetime.strftime('%Y-%m-%d')}")
@@ -159,11 +163,12 @@ def main():
         print(f"{obj['name']}:")
         for times, event_name in [('entry_times', 'Enters'), ('exit_times', 'Exits')]:
             for time in obj[times]:
-                if twilight_start <= time <= twilight_end:
+                if twilight_start <= time <= end_time:
                     event_alt, event_az = get_altaz_at_time(obj['coord'], observer, time)
                     print(f"  {event_name} window: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}*")
                     print(f"    Alt/Az at {event_name.lower()}: {event_alt:.2f}°/{event_az:.2f}°")
         print()
+
 
 if __name__ == "__main__":
     main()
