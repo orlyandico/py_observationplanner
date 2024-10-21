@@ -160,15 +160,24 @@ def main():
     twilight_start, twilight_end = get_twilight_times(observer, start_time, end_time)
 
     objects = read_csv(csv_file)
+
     visible_objects = calculate_visibility(objects, observer, alt, az, width, height, start_time, end_time, timezone)
 
-    # Sort objects based on the closest event (entry or exit) to current time
+    # Filter objects that enter or exit the window during astronomical darkness
+    dark_visible_objects = [
+        obj for obj in visible_objects
+        if (obj['entry_time'] and twilight_start <= obj['entry_time'] <= twilight_end) or
+           (obj['exit_time'] and twilight_start <= obj['exit_time'] <= twilight_end)
+    ]
+
+
+# Sort objects based on the closest event (entry or exit) to current time
     def sort_key(obj):
-        entry_diff = abs((obj['entry_time'] - current_time).total_seconds()) if obj['entry_time'] else float('inf')
-        exit_diff = abs((obj['exit_time'] - current_time).total_seconds()) if obj['exit_time'] else float('inf')
+        entry_diff = abs((obj['entry_time'] - current_time).total_seconds()) if obj['entry_time'] and twilight_start <= obj['entry_time'] <= twilight_end else float('inf')
+        exit_diff = abs((obj['exit_time'] - current_time).total_seconds()) if obj['exit_time'] and twilight_start <= obj['exit_time'] <= twilight_end else float('inf')
         return min(entry_diff, exit_diff)
 
-    sorted_objects = sorted(visible_objects, key=sort_key)
+    sorted_objects = sorted(dark_visible_objects, key=sort_key)
 
     print(f"Report for night of {start_time.datetime.strftime('%Y-%m-%d')}")
     print(f"Current time: {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -190,24 +199,15 @@ def main():
     print()
 
     for obj in sorted_objects:
-        if obj['has_dark_event']:
             print(f"{obj['name']}:")
-            if obj['rise_time']:
-                dark_indicator = '*' if is_dark(Time(obj['rise_time']), observer) else ''
-                print(f"  Rises: {obj['rise_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}{dark_indicator}")
-            if obj['set_time']:
-                dark_indicator = '*' if is_dark(Time(obj['set_time']), observer) else ''
-                print(f"  Sets: {obj['set_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}{dark_indicator}")
-            if obj['entry_time']:
-                dark_indicator = '*' if is_dark(Time(obj['entry_time']), observer) else ''
-                time_diff = obj['entry_time'] - current_time
+            if obj['entry_time'] and twilight_start <= obj['entry_time'] <= twilight_end:
                 entry_alt, entry_az = get_altaz_at_time(obj['coord'], observer, obj['entry_time'])
-                print(f"  Enters window: {obj['entry_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}{dark_indicator}")
+                print(f"  Enters window: {obj['entry_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}*")
                 print(f"    Alt/Az at entry: {entry_alt:.2f}°/{entry_az:.2f}°")
-            if obj['exit_time']:
-                dark_indicator = '*' if is_dark(Time(obj['exit_time']), observer) else ''
-                time_diff = obj['exit_time'] - current_time
-                print(f"  Exits window: {obj['exit_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}{dark_indicator}")
+            if obj['exit_time'] and twilight_start <= obj['exit_time'] <= twilight_end:
+                exit_alt, exit_az = get_altaz_at_time(obj['coord'], observer, obj['exit_time'])
+                print(f"  Exits window: {obj['exit_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}*")
+                print(f"    Alt/Az at exit: {exit_alt:.2f}°/{exit_az:.2f}°")
             print()
 
 if __name__ == "__main__":
