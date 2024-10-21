@@ -9,175 +9,132 @@ from zoneinfo import ZoneInfo
 from astroplan import Observer
 
 def get_twilight_times(observer, start_time, end_time):
-    # Convert to observer's timezone
     local_start = start_time.datetime.astimezone(observer.timezone)
     local_end = end_time.datetime.astimezone(observer.timezone)
 
-    # If it's after midnight, we need to look at the previous evening for twilight start
-    if local_start.hour < 12:
-        evening_base = Time((local_start - timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0))
-    else:
-        evening_base = Time(local_start.replace(hour=12, minute=0, second=0, microsecond=0))
+    evening_base = Time((local_start - timedelta(days=1 if local_start.hour < 12 else 0)).replace(hour=12, minute=0, second=0, microsecond=0))
 
     night_start = observer.twilight_evening_astronomical(evening_base, which='next')
     night_end = observer.twilight_morning_astronomical(night_start, which='next')
 
-    # Convert night_start and night_end to timezone-aware datetimes
     night_start_local = night_start.datetime.replace(tzinfo=observer.timezone)
     night_end_local = night_end.datetime.replace(tzinfo=observer.timezone) if night_end else None
 
-    # If twilight end is after our end_time, it's not visible in our window
     if night_end_local and night_end_local > local_end:
         night_end_local = None
 
-    # If twilight start is after our end_time, the entire night is not in our window
-    if night_start_local > local_end:
-        return None, None
-
-    return night_start_local, night_end_local
+    return (None, None) if night_start_local > local_end else (night_start_local, night_end_local)
 
 def parse_ra_dec(ra_str, dec_str):
-    ra = Angle(ra_str + ' hours')
-    dec = Angle(dec_str + ' degrees')
-    return SkyCoord(ra=ra, dec=dec, frame='icrs')
+    return SkyCoord(ra=Angle(ra_str + ' hours'), dec=Angle(dec_str + ' degrees'), frame='icrs')
 
 def read_csv(filename):
-    objects = []
     with open(filename, 'r') as f:
         reader = csv.DictReader(f)
-        for row in reader:
-            if row['RA'] and row['DEC']:
-                coord = parse_ra_dec(row['RA'], row['DEC'])
-                objects.append({
-                    'ID': row['ID'],
-                    'coord': coord,
-                    'name': f"{row['ID']} ({row['Type']} in {row['Constellation']}) - {row['Size']}\n{row['Remarks']}"
-                })
-    return objects
+        return [
+            {
+                'ID': row['ID'],
+                'coord': parse_ra_dec(row['RA'], row['DEC']) if row['RA'] and row['DEC'] else None,
+                'name': f"{row['ID']} ({row['Type']} in {row['Constellation']}) - {row['Size']}\n{row['Remarks']}"
+            }
+            for row in reader if row['RA'] and row['DEC']
+        ]
 
 def is_dark(time, observer):
-    sun_altaz = get_sun(time).transform_to(AltAz(obstime=time, location=observer.location))
-    return sun_altaz.alt < -18*u.deg  # Sun is 18 degrees below horizon (astronomical twilight)
+    return get_sun(time).transform_to(AltAz(obstime=time, location=observer.location)).alt < -18*u.deg
 
-def find_rise_set_times(coord, observer, times):
+def find_event_times(coord, observer, times, event_condition):
     altaz_frames = AltAz(obstime=[Time(t) for t in times], location=observer.location)
     obj_altazs = coord.transform_to(altaz_frames)
 
-    above_horizon = obj_altazs.alt > 0*u.deg
-    rises = np.where((~above_horizon[:-1]) & above_horizon[1:])[0]
-    sets = np.where(above_horizon[:-1] & (~above_horizon[1:]))[0]
+    events = np.where(event_condition(obj_altazs))[0]
+    return times[events[0]] if len(events) > 0 else None
 
-    rise_time = times[rises[0]] if len(rises) > 0 else None
-    set_time = times[sets[0]] if len(sets) > 0 else None
+def is_in_fov(altazs, center_alt, center_az, width, height):
+    alt_min, alt_max = center_alt - height/2, center_alt + height/2
+    az_min, az_max = (center_az - width/2) % 360, (center_az + width/2) % 360
 
-    return rise_time, set_time
+    obj_alts, obj_azs = altazs.alt.deg, altazs.az.deg
 
-def find_window_times(coord, observer, alt, az, width, height, times):
-    altaz_frames = AltAz(obstime=[Time(t) for t in times], location=observer.location)
-    obj_altazs = coord.transform_to(altaz_frames)
-
-    in_window = [is_in_fov(obj_altaz, alt, az, width, height) for obj_altaz in obj_altazs]
-    entries = np.where((~np.array(in_window[:-1])) & np.array(in_window[1:]))[0]
-    exits = np.where(np.array(in_window[:-1]) & (~np.array(in_window[1:])))[0]
-
-    entry_time = times[entries[0]] if len(entries) > 0 else None
-    exit_time = times[exits[0]] if len(exits) > 0 else None
-
-    return entry_time, exit_time
-
-def is_in_fov(obj_altaz, center_alt, center_az, width, height):
-    alt_min = center_alt - height/2
-    alt_max = center_alt + height/2
-    az_min = (center_az - width/2) % 360
-    az_max = (center_az + width/2) % 360
-
-    obj_alt = obj_altaz.alt.deg
-    obj_az = obj_altaz.az.deg
-
-    in_alt_range = alt_min <= obj_alt <= alt_max
+    in_alt_range = (alt_min <= obj_alts) & (obj_alts <= alt_max)
 
     if az_min < az_max:
-        in_az_range = az_min <= obj_az <= az_max
+        in_az_range = (az_min <= obj_azs) & (obj_azs <= az_max)
     else:  # Field of view crosses 0/360 degree azimuth
-        in_az_range = obj_az >= az_min or obj_az <= az_max
+        in_az_range = (obj_azs >= az_min) | (obj_azs <= az_max)
 
-    return in_alt_range and in_az_range
+    return in_alt_range & in_az_range
 
+def find_event_times(coord, observer, times, event_condition):
+    altaz_frames = AltAz(obstime=[Time(t) for t in times], location=observer.location)
+    obj_altazs = coord.transform_to(altaz_frames)
+
+    events = event_condition(obj_altazs)
+    event_indices = np.where(events)[0]
+
+    return [times[i] for i in event_indices] if len(event_indices) > 0 else []
 
 def calculate_visibility(objects, observer, alt, az, width, height, start_time, end_time, timezone):
-    results = []
     times = [start_time.datetime.replace(tzinfo=timezone) + timedelta(minutes=i*5) for i in range(int((end_time.datetime - start_time.datetime).total_seconds() / 300))]
 
+    results = []
     for obj in objects:
-        rise_time, set_time = find_rise_set_times(obj['coord'], observer, times)
-        entry_time, exit_time = find_window_times(obj['coord'], observer, alt, az, width, height, times)
+        altaz_frames = AltAz(obstime=[Time(t) for t in times], location=observer.location)
+        obj_altazs = obj['coord'].transform_to(altaz_frames)
 
-        if rise_time or set_time or entry_time or exit_time:
+        above_horizon = obj_altazs.alt > 0*u.deg
+        in_fov = is_in_fov(obj_altazs, alt, az, width, height)
+
+        rise_times = find_event_times(obj['coord'], observer, times, lambda altazs: (~above_horizon[:-1]) & above_horizon[1:])
+        set_times = find_event_times(obj['coord'], observer, times, lambda altazs: above_horizon[:-1] & (~above_horizon[1:]))
+        entry_times = find_event_times(obj['coord'], observer, times, lambda altazs: (~in_fov[:-1]) & in_fov[1:])
+        exit_times = find_event_times(obj['coord'], observer, times, lambda altazs: in_fov[:-1] & (~in_fov[1:]))
+
+        if any([rise_times, set_times, entry_times, exit_times]):
             results.append({
                 'name': obj['name'],
                 'coord': obj['coord'],
-                'rise_time': rise_time,
-                'set_time': set_time,
-                'entry_time': entry_time,
-                'exit_time': exit_time,
-                'has_dark_event': (rise_time and is_dark(Time(rise_time), observer)) or
-                                  (set_time and is_dark(Time(set_time), observer)) or
-                                  (entry_time and is_dark(Time(entry_time), observer)) or
-                                  (exit_time and is_dark(Time(exit_time), observer))
+                'rise_times': rise_times,
+                'set_times': set_times,
+                'entry_times': entry_times,
+                'exit_times': exit_times,
+                'has_dark_event': any(is_dark(Time(time), observer) for times in [rise_times, set_times, entry_times, exit_times] for time in times)
             })
 
     return results
 
 
 def get_altaz_at_time(coord, observer, time):
-    altaz_frame = AltAz(obstime=Time(time), location=observer.location)
-    altaz = coord.transform_to(altaz_frame)
+    altaz = coord.transform_to(AltAz(obstime=Time(time), location=observer.location))
     return altaz.alt.deg, altaz.az.deg
 
+
 def main():
-    csv_file = 'astronomical_objects.csv'  # Replace with your CSV file path
-    lat = 51.5074  # London latitude
-    lon = -0.1278  # London longitude
-    alt = 60  # 45 degrees altitude
-    az = 250  # 220 degrees azimuth
-    width = 160  # 120 degrees width
-    height = 60  # 60 degrees height
+    csv_file = 'astronomical_objects.csv'
+    lat, lon = 51.5074, -0.1278  # London
+    alt, az, width, height = 60, 250, 160, 60
 
-    # Set timezone for London
     timezone = ZoneInfo('Europe/London')
-
-    # Create observer
     location = EarthLocation(lat=lat*u.deg, lon=lon*u.deg)
     observer = Observer(location=location, timezone=timezone)
 
-    # Use current time as start time in the specified timezone
     current_time = datetime.now(timezone)
-    start_time = Time(current_time)
-    # Set end time to 24 hours from now
-    end_time = Time(start_time.datetime + timedelta(days=1))
+    start_time, end_time = Time(current_time), Time(current_time + timedelta(days=1))
 
-    # Get astronomical twilight times
     twilight_start, twilight_end = get_twilight_times(observer, start_time, end_time)
 
     objects = read_csv(csv_file)
-
     visible_objects = calculate_visibility(objects, observer, alt, az, width, height, start_time, end_time, timezone)
 
-    # Filter objects that enter or exit the window during astronomical darkness
     dark_visible_objects = [
         obj for obj in visible_objects
-        if (obj['entry_time'] and twilight_start <= obj['entry_time'] <= twilight_end) or
-           (obj['exit_time'] and twilight_start <= obj['exit_time'] <= twilight_end)
+        if any(twilight_start <= time <= twilight_end for time in obj['entry_times'] + obj['exit_times'])
     ]
 
-
-# Sort objects based on the closest event (entry or exit) to current time
-    def sort_key(obj):
-        entry_diff = abs((obj['entry_time'] - current_time).total_seconds()) if obj['entry_time'] and twilight_start <= obj['entry_time'] <= twilight_end else float('inf')
-        exit_diff = abs((obj['exit_time'] - current_time).total_seconds()) if obj['exit_time'] and twilight_start <= obj['exit_time'] <= twilight_end else float('inf')
-        return min(entry_diff, exit_diff)
-
-    sorted_objects = sorted(dark_visible_objects, key=sort_key)
+    sorted_objects = sorted(dark_visible_objects, key=lambda obj: min(
+        min((abs((time - current_time).total_seconds()) for time in obj['entry_times'] if twilight_start <= time <= twilight_end), default=float('inf')),
+        min((abs((time - current_time).total_seconds()) for time in obj['exit_times'] if twilight_start <= time <= twilight_end), default=float('inf'))
+    ))
 
     print(f"Report for night of {start_time.datetime.strftime('%Y-%m-%d')}")
     print(f"Current time: {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -199,16 +156,14 @@ def main():
     print()
 
     for obj in sorted_objects:
-            print(f"{obj['name']}:")
-            if obj['entry_time'] and twilight_start <= obj['entry_time'] <= twilight_end:
-                entry_alt, entry_az = get_altaz_at_time(obj['coord'], observer, obj['entry_time'])
-                print(f"  Enters window: {obj['entry_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}*")
-                print(f"    Alt/Az at entry: {entry_alt:.2f}°/{entry_az:.2f}°")
-            if obj['exit_time'] and twilight_start <= obj['exit_time'] <= twilight_end:
-                exit_alt, exit_az = get_altaz_at_time(obj['coord'], observer, obj['exit_time'])
-                print(f"  Exits window: {obj['exit_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}*")
-                print(f"    Alt/Az at exit: {exit_alt:.2f}°/{exit_az:.2f}°")
-            print()
+        print(f"{obj['name']}:")
+        for times, event_name in [('entry_times', 'Enters'), ('exit_times', 'Exits')]:
+            for time in obj[times]:
+                if twilight_start <= time <= twilight_end:
+                    event_alt, event_az = get_altaz_at_time(obj['coord'], observer, time)
+                    print(f"  {event_name} window: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}*")
+                    print(f"    Alt/Az at {event_name.lower()}: {event_alt:.2f}°/{event_az:.2f}°")
+        print()
 
 if __name__ == "__main__":
     main()
