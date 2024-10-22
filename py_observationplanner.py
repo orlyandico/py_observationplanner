@@ -33,9 +33,9 @@ def read_csv(filename):
         reader = csv.DictReader(f)
         return [
             {
-                'ID': row['ID'],
-                'coord': parse_ra_dec(row['RA'], row['DEC']) if row['RA'] and row['DEC'] else None,
-                'name': f"{row['ID']} ({row['Type']} in {row['Constellation']}) - {row['Size']}\n{row['Remarks']}"
+                'ID': row['ID'].strip() if row['ID'] else '',
+                'coord': parse_ra_dec(row['RA'].strip(), row['DEC'].strip()) if row['RA'] and row['DEC'] else None,
+                'name': f"{row['ID'].strip() if row['ID'] else ''} (Mag {row['Mag'].strip() if row['Mag'] else ''} {row['Type'].strip() if row['Type'] else ''} in {row['Constellation'].strip() if row['Constellation'] else ''}) - {row['Size'].strip() if row['Size'] else ''}\n{row['Remarks'].strip() if row['Remarks'] else ''}"
             }
             for row in reader if row['RA'] and row['DEC']
         ]
